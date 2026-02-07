@@ -1,0 +1,225 @@
+//@version=6
+indicator("Price % Change from Time High", shorttitle="% from Time High", overlay=true, max_bars_back=5000)
+
+// -------------------- INPUTS --------------------
+timeUnit  = input.string("Minutes", "Time Unit", options=["Minutes", "Hours", "Days", "Weeks"], display=display.none)
+timeValue = input.int(60, "Time Period", minval=1, display=display.none)
+gainLossDays = input.int(5, "Gain/Loss Days", minval=1, display=display.none)
+
+showLabel     = input.bool(true, "Show Label on Chart", display=display.none)
+labelPosition = input.string("Top Right", "Label Position", options=["Top Right", "Top Left", "Top Center", "Middle Right", "Middle Left", "Middle Center", "Bottom Right", "Bottom Left", "Bottom Center"], display=display.none)
+
+// Offsets in table cells (integers). Each increment moves by one table cell.
+horizontalOffset = input.int(3, "Horizontal Offset (cells)", minval=0, maxval=200, display=display.none)
+verticalOffset   = input.int(0, "Vertical Offset (cells)",   minval=0, maxval=200, display=display.none)
+
+// Line spacing when rendering separate rows (0 = multiline single cell)
+rowSpacing = input.int(0, "Line Spacing (0 = stacked multiline)", minval=0, maxval=5, display=display.none)
+
+// Styling
+textSize  = input.string(size.normal, "Font Size", options=[size.tiny, size.small, size.normal, size.large, size.huge], display=display.none)
+textColor = input.color(color.black, "Text Color", display=display.none)
+bgColor   = input.color(color.white, "Background Color", display=display.none)
+
+// Currency symbol & date format
+currencySymbol = input.string("$", "Currency Symbol", display=display.none)
+dateFormat     = input.string("DD-MM-YY", "Date Format", options=["DD-MM-YY", "MM-DD-YY", "YYYY-MM-DD", "DD/MM/YYYY", "DD Mon YY"], display=display.none)
+
+// -------------------- CALCULATIONS --------------------
+timeInMs = switch timeUnit
+    "Minutes" => timeValue * 60 * 1000
+    "Hours"   => timeValue * 60 * 60 * 1000
+    "Days"    => timeValue * 24 * 60 * 60 * 1000
+    "Weeks"   => timeValue * 7 * 24 * 60 * 60 * 1000
+    => timeValue * 60 * 1000
+
+targetTime = time - timeInMs
+var float referenceHigh = na
+var int   referenceHighTime = na
+float tempHigh = na
+int   tempHighTime = na
+
+for i = 0 to 4999
+    if time[i] >= targetTime
+        if na(tempHigh) or high[i] > tempHigh
+            tempHigh := high[i]
+            tempHighTime := time[i]
+    else
+        break
+referenceHigh := tempHigh
+referenceHighTime := tempHighTime
+
+var float chartHigh = na
+var int   chartHighTime = na
+if na(chartHigh)
+    chartHigh := high
+    chartHighTime := time
+else
+    if high > chartHigh
+        chartHigh := high
+        chartHighTime := time
+
+percentFromHigh = na(referenceHigh) ? 0.0 : ((close - referenceHigh) / referenceHigh) * 100
+percentToHigh   = na(referenceHigh) ? 0.0 : ((referenceHigh - close) / close) * 100
+percentFromATH  = na(chartHigh)     ? na  : ((close - chartHigh) / chartHigh) * 100
+
+dailyClose = request.security(syminfo.tickerid, "D", close)
+dailyClosePrev = request.security(syminfo.tickerid, "D", close[gainLossDays])
+gainLossPct = na(dailyClosePrev) ? na : ((dailyClose - dailyClosePrev) / dailyClosePrev) * 100
+
+// Date formatting helpers
+pad2(x) => x < 10 ? "0" + str.tostring(x) : str.tostring(x)
+monthShortName(m) =>
+    switch m
+        1 => "Jan"
+        2 => "Feb"
+        3 => "Mar"
+        4 => "Apr"
+        5 => "May"
+        6 => "Jun"
+        7 => "Jul"
+        8 => "Aug"
+        9 => "Sep"
+        10 => "Oct"
+        11 => "Nov"
+        => "Dec"
+
+formatDateTS(ts) =>
+    if na(ts)
+        "N/A"
+    else
+        d = pad2(dayofmonth(ts))
+        mInt = month(ts)
+        m = pad2(mInt)
+        y4 = str.tostring(year(ts))
+        y2 = pad2(year(ts) % 100)
+        mShort = monthShortName(mInt)
+        switch dateFormat
+            "DD-MM-YY"   => d + "-" + m + "-" + y2
+            "MM-DD-YY"   => m + "-" + d + "-" + y2
+            "YYYY-MM-DD" => y4 + "-" + m + "-" + d
+            "DD/MM/YYYY" => d + "/" + m + "/" + y4
+            "DD Mon YY"  => d + " " + mShort + " " + y2
+            => d + "-" + m + "-" + y2
+
+chartHighDate = formatDateTS(chartHighTime)
+referenceHighDate = formatDateTS(referenceHighTime)
+refPriceStr = na(referenceHigh) ? "N/A" : (currencySymbol + str.tostring(referenceHigh, format.mintick))
+currentPriceStr = currencySymbol + str.tostring(close, format.mintick)
+
+// Format timeframe
+rawTF = timeframe.period
+formattedTF = rawTF == "D" ? "1D" : rawTF == "W" ? "1W" : rawTF == "M" ? "1M" : rawTF
+tfNum = str.tonumber(rawTF)
+if not na(tfNum)
+    formattedTF := tfNum < 60 ? str.tostring(tfNum) + "m" : tfNum < 1440 ? str.tostring(tfNum/60) + "h" : str.tostring(tfNum/1440) + "D"
+
+// -------------------- PREPARE STRINGS --------------------
+str_1 = "Highest (" + str.tostring(timeValue) + " " + timeUnit + "): " + referenceHighDate + " " + refPriceStr
+str_2 = "Current Price: " + currentPriceStr
+str_3 = "% Loss From High: " + str.tostring(percentFromHigh, "#.##") + "%"
+str_3b = (na(gainLossPct) ? "Gain/Loss " : (gainLossPct >= 0 ? "Gain " : "Loss ")) + "in " + str.tostring(gainLossDays) + " Days: " + (na(gainLossPct) ? "N/A" : (gainLossPct >= 0 ? "+" : "-") + str.tostring(math.abs(gainLossPct), "#.##") + "%")
+str_4 = "% To Break Even: " + str.tostring(percentToHigh, "#.##") + "%"
+str_5 = "% Loss From " + formattedTF + " Chart High: " + (na(percentFromATH) ? "N/A" : str.tostring(percentFromATH, "#.##") + "%")
+str_6 = "Date of " + formattedTF + " Chart High: " + chartHighDate
+substepInfo = ""  // no half-step trick here; table indices must be integers
+
+// number of data rows
+numDataRows = rowSpacing == 0 ? 1 : 7
+
+// -------------------- TABLE RENDER (fixed to chart corner) --------------------
+// persistent table variables
+var table infoTable = na
+var int prevCols = 0
+var int prevRows = 0
+var string prevLabelPosition = ""  // track anchor so we can recreate table when user changes position
+
+labelPos = switch labelPosition
+    "Top Right"     => position.top_right
+    "Top Left"      => position.top_left
+    "Top Center"    => position.top_center
+    "Middle Right"  => position.middle_right
+    "Middle Left"   => position.middle_left
+    "Middle Center" => position.middle_center
+    "Bottom Right"  => position.bottom_right
+    "Bottom Left"   => position.bottom_left
+    "Bottom Center" => position.bottom_center
+    => position.top_right
+
+if showLabel
+    // offsets mapped directly to table cells (integers)
+    mappedHorz = horizontalOffset
+    mappedVert = verticalOffset
+
+    // minimal table size required
+    totalRows = numDataRows + mappedVert + 3
+    totalCols = 1 + mappedHorz + 3
+
+    // safety cap
+    maxGrid = 200
+    totalCols := math.min(totalCols, maxGrid)
+    totalRows := math.min(totalRows, maxGrid)
+
+    // create/recreate table when needed (including when labelPosition changed)
+    if na(infoTable) or prevCols != totalCols or prevRows != totalRows or labelPosition != prevLabelPosition
+        if not na(infoTable)
+            table.delete(infoTable)
+        infoTable := table.new(labelPos, totalCols, totalRows, border_width=0)
+        prevCols := totalCols
+        prevRows := totalRows
+        prevLabelPosition := labelPosition
+
+    // compute start indices inside table
+    int startRow = 0
+    if str.contains(labelPosition, "Top")
+        startRow := mappedVert
+    else if str.contains(labelPosition, "Middle")
+        startRow := math.max(0, math.round((totalRows - numDataRows) / 2) + mappedVert)
+    else
+        startRow := math.max(0, totalRows - numDataRows - mappedVert)
+
+    int startCol = 0
+    if str.contains(labelPosition, "Left")
+        startCol := mappedHorz
+    else if str.contains(labelPosition, "Center")
+        startCol := math.max(0, math.round((totalCols - 1) / 2) + mappedHorz)
+    else
+        startCol := math.max(0, totalCols - 1 - mappedHorz)
+
+    // clamp
+    startRow := math.min(startRow, totalRows - 1)
+    startCol := math.min(startCol, totalCols - 1)
+
+    // fill grid cells to force offsets
+    for r = 0 to totalRows - 1
+        for c = 0 to totalCols - 1
+            table.cell(infoTable, c, r, "", bgcolor=color.new(color.white, 100))
+
+    // render content
+    if rowSpacing == 0
+        fullText = str_1 + "\n" + str_2 + "\n" + str_3 + "\n" + str_4 + "\n" + str_5 + "\n" + str_6 + "\n" + str_3b + substepInfo
+        table.cell(infoTable, startCol, startRow, fullText, text_color=textColor, bgcolor=bgColor, text_size=textSize, text_halign=text.align_left)
+    else
+        step = math.max(1, rowSpacing)
+        r0 = math.min(startRow + (0 * step), totalRows - 1)
+        r1 = math.min(startRow + (1 * step), totalRows - 1)
+        r2 = math.min(startRow + (2 * step), totalRows - 1)
+        r3 = math.min(startRow + (3 * step), totalRows - 1)
+        r4 = math.min(startRow + (4 * step), totalRows - 1)
+        r5 = math.min(startRow + (5 * step), totalRows - 1)
+        r6 = math.min(startRow + (6 * step), totalRows - 1)
+
+        table.cell(infoTable, startCol, r0, str_1, text_color=textColor, bgcolor=bgColor, text_size=textSize, text_halign=text.align_left)
+        table.cell(infoTable, startCol, r1, str_2, text_color=textColor, bgcolor=bgColor, text_size=textSize, text_halign=text.align_left)
+        table.cell(infoTable, startCol, r2, str_3, text_color=textColor, bgcolor=bgColor, text_size=textSize, text_halign=text.align_left)
+        table.cell(infoTable, startCol, r3, str_4, text_color=textColor, bgcolor=bgColor, text_size=textSize, text_halign=text.align_left)
+        table.cell(infoTable, startCol, r4, str_5, text_color=textColor, bgcolor=bgColor, text_size=textSize, text_halign=text.align_left)
+        table.cell(infoTable, startCol, r5, str_6, text_color=textColor, bgcolor=bgColor, text_size=textSize, text_halign=text.align_left)
+        table.cell(infoTable, startCol, r6, str_3b + substepInfo, text_color=textColor, bgcolor=bgColor, text_size=textSize, text_halign=text.align_left)
+else
+    if not na(infoTable)
+        table.delete(infoTable)
+        infoTable := na
+        prevCols := 0
+        prevRows := 0
+        prevLabelPosition := ""
